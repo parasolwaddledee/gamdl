@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import structlog
 
@@ -35,7 +35,6 @@ class QueueConfig:
     package: str
     command: str
     pending_name: str
-    storefront: str
     language: str
 
 
@@ -51,7 +50,6 @@ QUEUES = {
         package="gamdl",
         command="gamdl",
         pending_name="US_Pending",
-        storefront="us",
         language="en-US",
     ),
     "cn": QueueConfig(
@@ -59,7 +57,6 @@ QUEUES = {
         package="gamdl_cn",
         command="gamdl_cn",
         pending_name="CN_Pending",
-        storefront="cn",
         language="zh-Hans-CN",
     ),
 }
@@ -204,6 +201,14 @@ def _track_ref(track: dict[str, Any]) -> TrackRef | None:
     return TrackRef(library_id=library_id, catalog_id=catalog_id)
 
 
+def _account_storefront(api: Any) -> str | None:
+    account_info = getattr(api, "account_info", None) or {}
+    metadata = account_info.get("meta") or {}
+    subscription = metadata.get("subscription") or {}
+    storefront = str(subscription.get("storefront") or "").lower()
+    return storefront if re.fullmatch(r"[a-z]{2}", storefront) else None
+
+
 def _registered_download(database_path: Path, track: TrackRef) -> Path | None:
     if not database_path.is_file():
         return None
@@ -255,6 +260,7 @@ async def _download(
     queue: QueueConfig,
     track: TrackRef,
     *,
+    storefront: str,
     cookies_path: Path,
     output_root: Path,
     state_dir: Path,
@@ -269,7 +275,10 @@ async def _download(
     temp_path = state_dir / "tmp" / queue.key
     output_path.mkdir(parents=True, exist_ok=True)
     temp_path.mkdir(parents=True, exist_ok=True)
-    url = f"https://music.apple.com/{queue.storefront}/song/queue/{track.catalog_id}"
+    url = (
+        f"https://music.apple.com/{storefront}/song/queue/{track.catalog_id}?"
+        f"{urlencode({'l': queue.language})}"
+    )
     command = [
         queue.command,
         "--no-config-file",
@@ -373,7 +382,7 @@ async def _create_api(queue: QueueConfig, cookies_path: Path) -> Any:
     api_class = api_module.AppleMusicApi
     return await api_class.create_from_netscape_cookies(
         cookies_path=str(cookies_path),
-        storefront=queue.storefront,
+        storefront=None,
         language=queue.language,
     )
 
@@ -406,6 +415,10 @@ async def _process_queue(
         if dry_run:
             return unsupported
 
+        storefront = _account_storefront(api)
+        if not storefront:
+            raise QueueError("Apple Music account storefront is unavailable")
+
         failures = unsupported
         for index, track in enumerate(actionable, 1):
             print(f"[{label}] item {index}/{len(actionable)}: checking local download")
@@ -413,6 +426,7 @@ async def _process_queue(
                 await _download(
                     queue,
                     track,
+                    storefront=storefront,
                     cookies_path=cookies_path,
                     output_root=output_root,
                     state_dir=state_dir,
