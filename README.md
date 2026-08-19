@@ -142,6 +142,12 @@ a later retry or manual review. `US_Downloaded` and `CN_Downloaded` are never
 selected as destinations; their track contents are not queried and they are not
 modified.
 
+Both queues use the storefront authorized by the supplied Apple Music cookies
+and preserve each playlist item's original catalog ID. `CN_Pending` selects the
+`gamdl_cn` downloader and `zh-Hans-CN` metadata localization; it does not switch
+playback to the China catalog. For example, US account cookies produce a US song
+URL with `?l=zh-Hans-CN`, matching Apple Music's localized US links.
+
 Run a read-only preflight first:
 
 ```powershell
