@@ -82,6 +82,42 @@ The image runs as an unprivileged `gamdl` user and includes FFmpeg. It does not
 include cookies, Widevine device files, credentials, or `N_m3u8DL-RE`; mount or
 configure those at runtime as needed.
 
+## Playlist download queues
+
+The image also includes `gamdl_queue`, an idempotent queue processor for these
+exact playlist pairs:
+
+- official `gamdl`: `US_Pending` to `US_Downloaded`;
+- `gamdl_cn`: `CN_Pending` to `CN_Downloaded`.
+
+For each catalog song, it requires a completed local media file registered in
+SQLite and accepted by FFprobe, verifies that the song exists in the matching
+`Downloaded` playlist, and only then removes it from `Pending`. A retry reuses
+verified downloads and does not append a second copy to the destination
+playlist.
+
+Run a read-only preflight first:
+
+```powershell
+.\scripts\run-playlist-queue.ps1 -CookiesPath "C:\path\to\cookies.txt" -DryRun
+```
+
+Process both queues:
+
+```powershell
+.\scripts\run-playlist-queue.ps1 -CookiesPath "C:\path\to\cookies.txt"
+```
+
+Downloads are stored under `downloads/playlist-queue`, while the SQLite state
+and the most recent downloader logs stay under the ignored
+`.gamdl/playlist-queue` directory. The Cookies file is mounted read-only.
+
+Apple's public Apple Music API documents adding tracks but not removing an
+individual playlist track. The final removal therefore uses the endpoint used
+by the Apple Music web player and verifies the result immediately. Because that
+endpoint is undocumented, Apple may change it without notice; a failed
+verification leaves the item in `Pending` for a later retry.
+
 Pushes to `main` and version tags publish the image to:
 
 ```text

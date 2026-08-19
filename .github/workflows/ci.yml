@@ -34,3 +34,8 @@ jobs:
       - name: Verify CLI
         run: |
           uv run gamdl_cn --version
+          uv run gamdl_queue --help
+
+      - name: Python tests
+        run: |
+          uv run python -m unittest discover -s tests
