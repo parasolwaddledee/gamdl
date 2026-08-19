@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any, AsyncGenerator, Callable
+from urllib.parse import parse_qs, urlparse
 
 import structlog
 
@@ -64,6 +65,21 @@ class AppleMusicInterface:
         log.debug("success", url_info=url_match)
 
         return url_match
+
+    async def _apply_url_preferences(self, url: str, url_info: AppleMusicUrlInfo) -> None:
+        storefront = url_info.storefront or url_info.library_storefront
+        if storefront:
+            self.base.apple_music_api.storefront = storefront
+            await self.base.itunes_api.set_storefront(storefront)
+
+        language = parse_qs(urlparse(url).query).get("l", [None])[0]
+        if language:
+            self.base.apple_music_api.language = language
+            self.base.apple_music_api.client.headers["accept-language"] = language
+            self.base.apple_music_api.client.params = (
+                self.base.apple_music_api.client.params.set("l", language)
+            )
+            self.base.itunes_api.set_language(language)
 
     async def _run_flat_filter(self, media: AppleMusicMedia) -> None:
         if not self.flat_filter_function or not media.partial:
@@ -425,6 +441,8 @@ class AppleMusicInterface:
 
         if not url_info:
             raise GamdlInterfaceUrlParseError(url)
+
+        await self._apply_url_preferences(url, url_info)
 
         if self.disallowed_media_types and url_info.type in self.disallowed_media_types:
             raise GamdlInterfaceMediaNotAllowedError(

@@ -88,7 +88,7 @@ class WrapperApi:
 
         raise GamdlApiResponseError(
             f"Unsupported wrapper-v2 API version. "
-            f"gamdl requires wrapper-v2 {TARGET_WRAPPER_API_VERSION}",
+            f"gamdl_cn requires wrapper-v2 {TARGET_WRAPPER_API_VERSION}",
             content={"detected_version": version},
         )
 

@@ -1,4 +1,4 @@
-"""Thin async shims for gamdl's native Rust media engine."""
+"""Thin async shims for gamdl_cn's native Rust media engine."""
 
 from __future__ import annotations
 

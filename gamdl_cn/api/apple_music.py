@@ -27,6 +27,7 @@ from .constants import (
     APPLE_MUSIC_LIBRARY_SONG_API_URI,
     APPLE_MUSIC_LIBRARY_SONGS_API_URI,
     APPLE_MUSIC_SONG_API_URI,
+    APPLE_MUSIC_SYLLABLE_LYRICS_API_URI,
     APPLE_MUSIC_UPLOADED_VIDEO_API_URL,
     APPLE_MUSIC_WEBPLAYBACK_API_URL,
 )
@@ -163,8 +164,8 @@ class AppleMusicApi:
     @classmethod
     async def create(
         cls,
-        storefront: str | None = "us",
-        language: str = "en-US",
+        storefront: str | None = "cn",
+        language: str = "zh-Hans-CN",
         token: str | None = None,
         media_user_token: str | None = None,
     ) -> "AppleMusicApi":
@@ -174,11 +175,8 @@ class AppleMusicApi:
             if media_user_token
             else None
         )
-        storefront = (
-            account_info["meta"]["subscription"]["storefront"]
-            if account_info
-            else storefront
-        )
+        if not storefront and account_info:
+            storefront = account_info["meta"]["subscription"]["storefront"]
         if not storefront:
             raise ValueError(
                 "Storefront must be provided if it cannot be determined from account info"
@@ -187,7 +185,11 @@ class AppleMusicApi:
         client = httpx.AsyncClient(
             headers={
                 "authorization": f"Bearer {token}",
+                "accept-language": language,
                 "origin": APPLE_MUSIC_HOMEPAGE_URL,
+            },
+            params={
+                "l": language,
             },
             transport=RetryTransport(
                 retry=Retry(
@@ -298,6 +300,50 @@ class AppleMusicApi:
 
         return response_json
 
+    @staticmethod
+    def _normalize_language_tag(language: str | None) -> str | None:
+        if not language:
+            return None
+        return language.replace("_", "-")
+
+    def get_lyrics_language_tag(self) -> str | None:
+        normalized_language = self._normalize_language_tag(self.language)
+        return normalized_language.lower() if normalized_language else None
+
+    def get_lyrics_script_tag(self) -> str | None:
+        normalized_language = self._normalize_language_tag(self.language)
+        if not normalized_language:
+            return None
+
+        language_parts = normalized_language.split("-")
+        primary_language = language_parts[0].lower()
+        script_subtag = next(
+            (
+                part.title()
+                for part in language_parts[1:]
+                if len(part) == 4 and part.isalpha()
+            ),
+            None,
+        )
+        if not script_subtag:
+            return None
+
+        return f"{primary_language}-{script_subtag}"
+
+    def get_lyrics_params(self) -> dict:
+        params = {
+            "extend": "ttmlLocalizations",
+        }
+        lyrics_language_tag = self.get_lyrics_language_tag()
+        if lyrics_language_tag:
+            params["l[lyrics]"] = lyrics_language_tag
+
+        lyrics_script_tag = self.get_lyrics_script_tag()
+        if lyrics_script_tag:
+            params["l[script]"] = lyrics_script_tag
+
+        return params
+
     async def get_song(
         self,
         song_id: str,
@@ -320,6 +366,24 @@ class AppleMusicApi:
         log.debug("success", song=song)
 
         return song
+
+    async def get_syllable_lyrics(
+        self,
+        song_id: str,
+    ) -> dict:
+        log = logger.bind(action="get_syllable_lyrics", song_id=song_id)
+
+        syllable_lyrics = await self._amp_request(
+            APPLE_MUSIC_SYLLABLE_LYRICS_API_URI.format(
+                storefront=self.storefront,
+                song_id=song_id,
+            ),
+            self.get_lyrics_params(),
+        )
+
+        log.debug("success", syllable_lyrics=syllable_lyrics)
+
+        return syllable_lyrics
 
     async def get_music_video(
         self,

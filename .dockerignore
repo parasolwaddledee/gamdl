@@ -1,0 +1,14 @@
+.git
+.github
+.gamdl
+Apple Music
+__pycache__
+*.py[cod]
+*.pyd
+*.so
+*.wvd
+cookies.txt
+build
+dist
+target
+gamdl_cn/downloader/ammuxer/target

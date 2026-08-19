@@ -15,7 +15,7 @@ class ConfigFile:
     def __init__(
         self,
         config_path: str,
-        section_name: str = "gamdl",
+        section_name: str = "gamdl_cn",
     ) -> None:
         self.config_path = config_path
         self.section_name = section_name
