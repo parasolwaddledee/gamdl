@@ -45,12 +45,16 @@ gamdl --config-path ~/.gamdl/gamdl.ini [OPTIONS] URLS...
 gamdl_cn --config-path ~/.gamdl/gamdl_cn.ini [OPTIONS] URLS...
 ```
 
-## Dual-command Docker image
+## Portable scheduled Docker service
 
-The Docker image contains both:
+The Docker image contains:
 
 - official `gamdl==3.8.5` from PyPI;
-- this repository's `gamdl_cn==3.8.5+cn` wheel.
+- this repository's `gamdl_cn==3.8.5+cn` wheel;
+- FFmpeg and the official [rclone 1.75.0](https://github.com/rclone/rclone/releases/tag/v1.75.0)
+  binary;
+- `gamdl_pipeline` for one verified transaction;
+- `gamdl_service` for a continuously scheduled service.
 
 Build locally:
 
@@ -58,29 +62,70 @@ Build locally:
 docker build --tag gamdl-dual .
 ```
 
-Confirm both commands:
+Confirm the installed commands:
 
 ```bash
 docker run --rm gamdl-dual gamdl --version
 docker run --rm gamdl-dual gamdl_cn --version
+docker run --rm gamdl-dual gamdl_pipeline --help
+docker run --rm gamdl-dual gamdl_service --help
 ```
 
-Run a download with read-only cookies and a writable output mount:
+The default container command is `gamdl_service`. It runs once immediately and
+then waits for `GAMDL_RUN_INTERVAL` after each completed run. The interval accepts
+plain seconds or an `s`, `m`, `h`, or `d` suffix, such as `1800`, `30m`, `1h`, or
+`1d`.
+
+Copy the parameter template, set the two host file paths, and start the service:
+
+```bash
+cp .env.example .env
+docker compose up --detach --build
+docker compose logs --follow pipeline
+```
+
+`GAMDL_COOKIES_FILE` and `RCLONE_CONFIG_FILE` are host-side Compose parameters.
+They are mounted read-only at `/config/cookies.txt` and `/config/rclone.conf`.
+They must be readable by Docker. Cookies, R2 credentials, Widevine device files,
+and other secrets are never copied into the image.
+
+The principal runtime parameters are:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GAMDL_RUN_INTERVAL` | `1h` | Delay after each completed run |
+| `GAMDL_RUN_IMMEDIATELY` | `true` | Run before the first interval wait |
+| `GAMDL_RUN_ONCE` | `false` | Execute one transaction and exit |
+| `GAMDL_COOKIES_PATH` | `/config/cookies.txt` | Cookies path inside the container |
+| `RCLONE_CONFIG` | `/config/rclone.conf` | rclone config path inside the container |
+| `RCLONE_DESTINATION` | `music:music` | Remote and path receiving the files |
+| `GAMDL_QUEUES` | `us,cn` | Queues to process (`us`, `cn`, or both) |
+| `GAMDL_KEEP_LOCAL` | `false` | Keep verified local files when true |
+| `GAMDL_DRY_RUN` | `false` | Read queues and preview copies only |
+| `GAMDL_DOWNLOAD_TIMEOUT` | `3600` | Per-track download timeout in seconds |
+| `GAMDL_VERIFY_ATTEMPTS` | `6` | Apple playlist removal checks |
+| `GAMDL_VERIFY_DELAY` | `3` | Seconds between removal checks |
+
+`/downloads` and `/state` are persistent volumes. `/state` contains the SQLite
+download registry, privacy-filtered downloader logs, and `last-run.json`. The
+Compose service runs with a read-only root filesystem, a temporary `/tmp`, no
+new privileges, and the unprivileged `gamdl` image user.
+
+For a one-shot run without Compose:
 
 ```bash
 docker run --rm \
+  --env GAMDL_RUN_ONCE=true \
+  --env RCLONE_DESTINATION=music:music \
   --volume ./cookies.txt:/config/cookies.txt:ro \
-  --volume ./downloads:/downloads \
-  gamdl-dual \
-  gamdl_cn \
-  --cookies-path /config/cookies.txt \
-  --config-path /config/gamdl_cn.ini \
-  "APPLE_MUSIC_URL"
+  --volume ./rclone.conf:/config/rclone.conf:ro \
+  --volume gamdl-downloads:/downloads \
+  --volume gamdl-state:/state \
+  gamdl-dual
 ```
 
-The image runs as an unprivileged `gamdl` user and includes FFmpeg. It does not
-include cookies, Widevine device files, credentials, or `N_m3u8DL-RE`; mount or
-configure those at runtime as needed.
+The original `gamdl` and `gamdl_cn` commands remain available by overriding the
+container command.
 
 ## Playlist download queues
 
@@ -109,19 +154,22 @@ Process both queues:
 .\scripts\run-playlist-queue.ps1 -CookiesPath "C:\path\to\cookies.txt"
 ```
 
-The PowerShell entry point then copies all generated `.m4a` and `.lrc` files to
-the `music:music` rclone destination using the default configuration at
-`%APPDATA%\rclone\rclone.conf`. It performs a one-way MD5 check and only after a
-successful check sends the exact, unchanged local files to the Windows Recycle
-Bin. A failed copy or check keeps the local files for the next run. `-DryRun`
-previews both queue and R2 work without deleting anything, and `-KeepLocal`
-disables local cleanup after a verified upload.
+The portable container pipeline copies all generated `.m4a` and `.lrc` files to
+the configured rclone destination, performs a one-way checksum check, and only
+then deletes the exact local files whose size and MD5 have not changed. A failed
+copy or check keeps the local files for the next run. `GAMDL_DRY_RUN=true`
+previews queue and R2 work without deleting anything, and
+`GAMDL_KEEP_LOCAL=true` disables local cleanup after a verified upload.
 
-Downloads are staged under `downloads/playlist-queue`, while the SQLite state
-and the most recent downloader logs stay under the ignored
-`.gamdl/playlist-queue` directory. The Cookies file is mounted read-only. Runs
-are protected by a named mutex so overlapping schedules cannot process the same
-files concurrently.
+The Windows PowerShell entry point remains available as a compatibility wrapper.
+It uses the host rclone configuration and sends verified local files to the
+Windows Recycle Bin instead of unlinking them.
+
+For the compatibility wrapper, downloads are staged under
+`downloads/playlist-queue`, while SQLite state and the most recent downloader
+logs stay under the ignored `.gamdl/playlist-queue` directory. Its runs are
+protected by a named mutex. The container service is a single sequential process
+and therefore cannot overlap its own scheduled runs.
 
 Apple's public Apple Music API does not document removing an individual
 playlist track. The final removal therefore uses the endpoint used by the Apple

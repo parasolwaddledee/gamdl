@@ -32,6 +32,8 @@ Upstream = "https://github.com/glomatico/gamdl"
 [project.scripts]
 gamdl_cn = "gamdl_cn.cli.cli:main"
 gamdl_queue = "gamdl_cn.cli.playlist_queue:main"
+gamdl_pipeline = "gamdl_cn.cli.playlist_pipeline:main"
+gamdl_service = "gamdl_cn.cli.playlist_service:main"
 
 [dependency-groups]
 dev = [

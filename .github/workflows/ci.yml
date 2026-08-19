@@ -35,6 +35,8 @@ jobs:
         run: |
           uv run gamdl_cn --version
           uv run gamdl_queue --help
+          uv run gamdl_pipeline --help
+          uv run gamdl_service --help
 
       - name: Python tests
         run: |

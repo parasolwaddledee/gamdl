@@ -8,7 +8,9 @@ gamdl_cn/downloader/**/__pycache__/
 gamdl_cn/ammuxer/
 !.gitignore
 !.dockerignore
+!.env.example
 !Dockerfile
+!compose.yaml
 !.github
 !.github/**
 !.python-version
