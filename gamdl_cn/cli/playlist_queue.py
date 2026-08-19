@@ -271,7 +271,7 @@ async def _download(
     if registered and await asyncio.to_thread(_media_is_decodable, registered):
         return registered
 
-    output_path = output_root / queue.key.upper()
+    output_path = output_root
     temp_path = state_dir / "tmp" / queue.key
     output_path.mkdir(parents=True, exist_ok=True)
     temp_path.mkdir(parents=True, exist_ok=True)

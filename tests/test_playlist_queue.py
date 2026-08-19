@@ -154,7 +154,7 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
             language="zh-Hans-CN",
         )
 
-    async def test_download_uses_account_storefront_original_id_and_language(
+    async def test_download_uses_storefront_original_id_and_shared_output(
         self,
     ) -> None:
         completed = SimpleNamespace(returncode=0, stdout="")
@@ -190,6 +190,9 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
         command = run.call_args.args[0]
         self.assertIn("--language", command)
         self.assertIn("zh-Hans-CN", command)
+        output_path_index = command.index("--output-path") + 1
+        self.assertEqual(command[output_path_index], str(root / "downloads"))
+        self.assertNotIn(str(root / "downloads" / "CN"), command)
         self.assertIn(
             "https://music.apple.com/us/song/queue/1721450032?l=zh-Hans-CN",
             command,
