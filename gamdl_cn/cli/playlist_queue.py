@@ -35,7 +35,6 @@ class QueueConfig:
     package: str
     command: str
     pending_name: str
-    downloaded_name: str
     storefront: str
     language: str
 
@@ -52,7 +51,6 @@ QUEUES = {
         package="gamdl",
         command="gamdl",
         pending_name="US_Pending",
-        downloaded_name="US_Downloaded",
         storefront="us",
         language="en-US",
     ),
@@ -61,7 +59,6 @@ QUEUES = {
         package="gamdl_cn",
         command="gamdl_cn",
         pending_name="CN_Pending",
-        downloaded_name="CN_Downloaded",
         storefront="cn",
         language="zh-Hans-CN",
     ),
@@ -344,31 +341,6 @@ async def _wait_for_catalog_id(
     return False
 
 
-async def _add_track(
-    api: Any,
-    playlist_id: str,
-    track: TrackRef,
-    *,
-    attempts: int,
-    delay: float,
-) -> None:
-    await _request(
-        api,
-        "POST",
-        f"/v1/me/library/playlists/{playlist_id}/tracks",
-        json={"data": [{"id": track.catalog_id, "type": "songs"}]},
-    )
-    if not await _wait_for_catalog_id(
-        api,
-        playlist_id,
-        track.catalog_id,
-        present=True,
-        attempts=attempts,
-        delay=delay,
-    ):
-        raise QueueMutationError("Added track did not appear in the destination playlist")
-
-
 async def _remove_track(
     api: Any,
     playlist_id: str,
@@ -423,25 +395,13 @@ async def _process_queue(
         print(f"[{label}] reading playlist queue", flush=True)
         playlists = await _list_playlists(api)
         pending = _resolve_playlist(playlists, queue.pending_name)
-        downloaded = _resolve_playlist(playlists, queue.downloaded_name)
-        if pending["id"] == downloaded["id"]:
-            raise QueueError(f"[{label}] Pending and Downloaded resolve to the same playlist")
 
         pending_tracks = await _list_tracks(api, pending["id"])
-        destination_tracks = await _list_tracks(api, downloaded["id"])
-        destination_catalog_ids = {
-            catalog_id
-            for track in destination_tracks
-            if (catalog_id := _catalog_id(track))
-        }
         actionable = [track for item in pending_tracks if (track := _track_ref(item))]
         unsupported = len(pending_tracks) - len(actionable)
-        already_in_destination = sum(
-            track.catalog_id in destination_catalog_ids for track in actionable
-        )
         print(
-            f"[{label}] pending={len(pending_tracks)} actionable={len(actionable)} "
-            f"already_in_destination={already_in_destination} unsupported={unsupported}"
+            f"[{label}] pending={len(pending_tracks)} "
+            f"actionable={len(actionable)} unsupported={unsupported}"
         )
         if dry_run:
             return unsupported
@@ -463,17 +423,6 @@ async def _process_queue(
                 print(f"[{label}] item {index}/{len(actionable)}: download failed: {error}")
                 continue
 
-            if track.catalog_id not in destination_catalog_ids:
-                print(f"[{label}] item {index}/{len(actionable)}: adding to Downloaded")
-                await _add_track(
-                    api,
-                    downloaded["id"],
-                    track,
-                    attempts=verify_attempts,
-                    delay=verify_delay,
-                )
-                destination_catalog_ids.add(track.catalog_id)
-
             print(f"[{label}] item {index}/{len(actionable)}: removing from Pending")
             await _remove_track(
                 api,
@@ -491,8 +440,8 @@ async def _process_queue(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Download songs from US_Pending/CN_Pending and move verified "
-            "downloads to the matching Downloaded playlist."
+            "Download songs from US_Pending/CN_Pending and remove each item "
+            "after its local download is verified."
         )
     )
     parser.add_argument("--cookies-path", type=Path, required=True)

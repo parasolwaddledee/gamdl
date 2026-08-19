@@ -117,17 +117,13 @@ class PlaylistQueueTests(unittest.TestCase):
 
 
 class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_process_queue_downloads_adds_then_removes(self) -> None:
+    async def test_process_queue_downloads_then_removes(self) -> None:
         operations: list[str] = []
         api = SimpleNamespace(client=SimpleNamespace(aclose=AsyncMock()))
         playlists = [
             {
                 "id": "p.pending",
                 "attributes": {"name": "US_Pending", "canEdit": True},
-            },
-            {
-                "id": "p.downloaded",
-                "attributes": {"name": "US_Downloaded", "canEdit": True},
             },
         ]
         track = {
@@ -139,9 +135,6 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
         async def download(*args, **kwargs) -> Path:
             operations.append("download")
             return Path("/downloads/song.m4a")
-
-        async def add(*args, **kwargs) -> None:
-            operations.append("add")
 
         async def remove(*args, **kwargs) -> None:
             operations.append("remove")
@@ -156,10 +149,9 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 playlist_queue,
                 "_list_tracks",
-                AsyncMock(side_effect=[[track], []]),
+                AsyncMock(return_value=[track]),
             ),
             patch.object(playlist_queue, "_download", side_effect=download),
-            patch.object(playlist_queue, "_add_track", side_effect=add),
             patch.object(playlist_queue, "_remove_track", side_effect=remove),
         ):
             failures = await _process_queue(
@@ -174,7 +166,7 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(failures, 0)
-        self.assertEqual(operations, ["download", "add", "remove"])
+        self.assertEqual(operations, ["download", "remove"])
         api.client.aclose.assert_awaited_once()
 
 

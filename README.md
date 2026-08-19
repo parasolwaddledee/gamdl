@@ -85,16 +85,17 @@ configure those at runtime as needed.
 ## Playlist download queues
 
 The image also includes `gamdl_queue`, an idempotent queue processor for these
-exact playlist pairs:
+exact playlists:
 
-- official `gamdl`: `US_Pending` to `US_Downloaded`;
-- `gamdl_cn`: `CN_Pending` to `CN_Downloaded`.
+- official `gamdl`: `US_Pending`;
+- `gamdl_cn`: `CN_Pending`.
 
 For each catalog song, it requires a completed local media file registered in
-SQLite and accepted by FFprobe, verifies that the song exists in the matching
-`Downloaded` playlist, and only then removes it from `Pending`. A retry reuses
-verified downloads and does not append a second copy to the destination
-playlist.
+SQLite and accepted by FFprobe, and only then removes it from `Pending`. A retry
+reuses verified downloads. Failed or unsupported items remain in `Pending` for
+a later retry or manual review. `US_Downloaded` and `CN_Downloaded` are never
+selected as destinations; their track contents are not queried and they are not
+modified.
 
 Run a read-only preflight first:
 
@@ -112,11 +113,11 @@ Downloads are stored under `downloads/playlist-queue`, while the SQLite state
 and the most recent downloader logs stay under the ignored
 `.gamdl/playlist-queue` directory. The Cookies file is mounted read-only.
 
-Apple's public Apple Music API documents adding tracks but not removing an
-individual playlist track. The final removal therefore uses the endpoint used
-by the Apple Music web player and verifies the result immediately. Because that
-endpoint is undocumented, Apple may change it without notice; a failed
-verification leaves the item in `Pending` for a later retry.
+Apple's public Apple Music API does not document removing an individual
+playlist track. The final removal therefore uses the endpoint used by the Apple
+Music web player and verifies the result immediately. Because that endpoint is
+undocumented, Apple may change it without notice; a failed verification leaves
+the item in `Pending` for a later retry.
 
 Pushes to `main` and version tags publish the image to:
 
