@@ -73,7 +73,7 @@ class CliConfig:
         option(
             "--config-path",
             help="Config file path",
-            default=str(Path.home() / ".gamdl" / "config.ini"),
+            default=str(Path.home() / ".gamdl_cn" / "config.ini"),
             type=click.Path(
                 file_okay=True,
                 dir_okay=False,

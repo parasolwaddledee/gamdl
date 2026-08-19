@@ -3,9 +3,9 @@ requires = ["maturin>=1.8,<2"]
 build-backend = "maturin"
 
 [project]
-name = "gamdl"
-version = "3.8.5"
-description = "A command-line app for downloading Apple Music songs, music videos and post videos."
+name = "gamdl_cn"
+version = "3.8.5+cn"
+description = "A China-focused downstream of gamdl with localized metadata and enhanced lyrics support."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -26,10 +26,11 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/glomatico/gamdl"
+Repository = "https://github.com/parasolwaddledee/gamdl"
+Upstream = "https://github.com/glomatico/gamdl"
 
 [project.scripts]
-gamdl = "gamdl.cli.cli:main"
+gamdl_cn = "gamdl_cn.cli.cli:main"
 
 [dependency-groups]
 dev = [
@@ -39,8 +40,8 @@ dev = [
 ]
 
 [tool.maturin]
-manifest-path = "gamdl/downloader/ammuxer/Cargo.toml"
-module-name = "gamdl._ammuxer"
+manifest-path = "gamdl_cn/downloader/ammuxer/Cargo.toml"
+module-name = "gamdl_cn._ammuxer"
 python-source = "."
 features = ["pyo3/extension-module"]
 include = ["LICENSE"]

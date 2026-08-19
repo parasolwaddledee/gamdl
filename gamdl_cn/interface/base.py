@@ -11,7 +11,7 @@ from PIL import Image
 from pywidevine import PSSH, Cdm, Device
 from pywidevine.license_protocol_pb2 import WidevinePsshData
 
-from gamdl.interface.wvd import WVD
+from gamdl_cn.interface.wvd import WVD
 
 from ..api.apple_music import AppleMusicApi
 from ..api.itunes import ItunesApi

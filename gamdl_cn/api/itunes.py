@@ -69,9 +69,9 @@ class ItunesApi:
     @classmethod
     async def create(
         cls,
-        storefront: str = "us",
-        storefront_id: int | None = 143441,
-        language: str = "en-US",
+        storefront: str = "cn",
+        storefront_id: int | None = None,
+        language: str = "zh-Hans-CN",
     ) -> "ItunesApi":
         storefront_id = storefront_id or await cls.get_storefront_id(storefront)
 
@@ -86,6 +86,23 @@ class ItunesApi:
             language=language,
             storefront_id=storefront_id,
         )
+
+    async def set_storefront(self, storefront: str) -> None:
+        if not storefront or storefront == self.storefront:
+            return
+
+        self.storefront = storefront
+        self.storefront_id = (
+            143441
+            if storefront.lower() == "us"
+            else await self.get_storefront_id(storefront)
+        )
+
+    def set_language(self, language: str | None) -> None:
+        if not language or language == self.language:
+            return
+
+        self.language = language
 
     async def get_lookup_result(
         self,

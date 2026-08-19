@@ -77,7 +77,7 @@ async def main(config: CliConfig):
         wrapper_class=structlog.make_filtering_bound_logger(config.log_level),
     )
 
-    logger.info(f"Starting Gamdl {__version__}")
+    logger.info(f"Starting gamdl_cn {__version__}")
 
     interactive_prompts = InteractivePrompts(
         artist_auto_select=config.artist_auto_select,
