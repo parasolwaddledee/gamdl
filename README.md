@@ -109,9 +109,19 @@ Process both queues:
 .\scripts\run-playlist-queue.ps1 -CookiesPath "C:\path\to\cookies.txt"
 ```
 
-Downloads are stored under `downloads/playlist-queue`, while the SQLite state
+The PowerShell entry point then copies all generated `.m4a` and `.lrc` files to
+the `music:music` rclone destination using the default configuration at
+`%APPDATA%\rclone\rclone.conf`. It performs a one-way MD5 check and only after a
+successful check sends the exact, unchanged local files to the Windows Recycle
+Bin. A failed copy or check keeps the local files for the next run. `-DryRun`
+previews both queue and R2 work without deleting anything, and `-KeepLocal`
+disables local cleanup after a verified upload.
+
+Downloads are staged under `downloads/playlist-queue`, while the SQLite state
 and the most recent downloader logs stay under the ignored
-`.gamdl/playlist-queue` directory. The Cookies file is mounted read-only.
+`.gamdl/playlist-queue` directory. The Cookies file is mounted read-only. Runs
+are protected by a named mutex so overlapping schedules cannot process the same
+files concurrently.
 
 Apple's public Apple Music API does not document removing an individual
 playlist track. The final removal therefore uses the endpoint used by the Apple
