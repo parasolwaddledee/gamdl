@@ -8,7 +8,7 @@ import re
 import signal
 import sys
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gamdl_cn.cli.playlist_pipeline import PipelineConfig, PipelineError, run_pipeline
@@ -182,14 +182,14 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop_service)
 
     if not args.run_immediately and not args.run_once:
-        next_run = datetime.now(UTC) + timedelta(seconds=interval_seconds)
+        next_run = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
         if _wait(stop_event, interval_seconds, next_run):
             raise SystemExit(0)
 
     run_number = 0
     while not stop_event.is_set():
         run_number += 1
-        started_at = datetime.now(UTC)
+        started_at = datetime.now(timezone.utc)
         print(f"Pipeline run {run_number} started at {started_at.isoformat()}.", flush=True)
         try:
             exit_code = asyncio.run(run_pipeline(pipeline_config))
@@ -203,7 +203,7 @@ def main() -> None:
                 flush=True,
             )
             exit_code = 1
-        completed_at = datetime.now(UTC)
+        completed_at = datetime.now(timezone.utc)
         _write_status(
             pipeline_config.state_dir,
             {
