@@ -148,6 +148,12 @@ and preserve each playlist item's original catalog ID. `CN_Pending` selects the
 playback to the China catalog. For example, US account cookies produce a US song
 URL with `?l=zh-Hans-CN`, matching Apple Music's localized US links.
 
+Both queues write into the same output root using gamdl's
+`Artist/Album/Track` layout. The queue name is not added to the path, so rclone
+uploads `Artist/Album/Track.m4a` directly below the configured destination
+rather than creating separate `US/` and `CN/` directories. US and CN retain
+separate SQLite databases and temporary directories.
+
 Run a read-only preflight first:
 
 ```powershell

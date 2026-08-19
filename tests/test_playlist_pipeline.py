@@ -67,11 +67,11 @@ class PlaylistPipelineTests(unittest.TestCase):
         return exit_code, commands
 
     def test_successful_copy_and_check_delete_only_media_files(self) -> None:
-        media_path = self.output_root / "US" / "song.m4a"
-        lyrics_path = self.output_root / "CN" / "song.lrc"
+        album_path = self.output_root / "Artist" / "Album"
+        media_path = album_path / "01 Song.m4a"
+        lyrics_path = album_path / "01 Song.lrc"
         ignored_path = self.output_root / "notes.txt"
         media_path.parent.mkdir(parents=True)
-        lyrics_path.parent.mkdir(parents=True)
         media_path.write_bytes(b"media")
         lyrics_path.write_text("lyrics", encoding="utf-8")
         ignored_path.write_text("keep", encoding="utf-8")
