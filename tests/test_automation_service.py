@@ -2,12 +2,13 @@ import os
 import unittest
 from unittest.mock import patch
 
-from gamdl_cn.cli.playlist_service import (
+from gamdl_cn.automation.service import (
     ServiceConfigError,
     _duration_seconds,
     _env_bool,
     _environment_queues,
 )
+from gamdl_cn.automation.config import AutomationConfigError, validate_runtime_limits
 
 
 class PlaylistServiceTests(unittest.TestCase):
@@ -36,6 +37,26 @@ class PlaylistServiceTests(unittest.TestCase):
         with patch.dict(os.environ, {"GAMDL_QUEUES": "other"}):
             with self.assertRaises(ServiceConfigError):
                 _environment_queues()
+
+    def test_runtime_limits_reject_unsafe_values(self) -> None:
+        with self.assertRaises(AutomationConfigError):
+            validate_runtime_limits(
+                download_timeout=0,
+                verify_attempts=1,
+                verify_delay=0,
+            )
+        with self.assertRaises(AutomationConfigError):
+            validate_runtime_limits(
+                download_timeout=1,
+                verify_attempts=0,
+                verify_delay=0,
+            )
+        with self.assertRaises(AutomationConfigError):
+            validate_runtime_limits(
+                download_timeout=1,
+                verify_attempts=1,
+                verify_delay=-1,
+            )
 
 
 if __name__ == "__main__":

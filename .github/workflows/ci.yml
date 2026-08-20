@@ -5,11 +5,18 @@ on:
   push:
     branches:
       - main
-      - rust-wrapper-support
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -27,17 +34,24 @@ jobs:
         run: |
           PYO3_PYTHON=python cargo test --manifest-path gamdl_cn/downloader/ammuxer/Cargo.toml
 
+      - name: Verify lock file
+        run: uv lock --check
+
       - name: Build native extension
         run: |
-          uv run maturin develop
+          uv run --locked maturin develop
 
       - name: Verify CLI
         run: |
-          uv run gamdl_cn --version
-          uv run gamdl_queue --help
-          uv run gamdl_pipeline --help
-          uv run gamdl_service --help
+          uv run --locked gamdl --version
+          uv run --locked gamdl_cn --version
+          uv run --locked gamdl_queue --help
+          uv run --locked gamdl_pipeline --help
+          uv run --locked gamdl_service --help
+
+      - name: Verify Compose deployment template
+        run: GAMDL_ENV_FILE=./gamdl/gamdl.env.example docker compose -f deploy/compose.yaml config --quiet
 
       - name: Python tests
         run: |
-          uv run python -m unittest discover -s tests
+          uv run --locked python -m unittest discover -s tests

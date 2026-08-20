@@ -61,19 +61,17 @@ IMAGE_FILE_EXTENSION_MAP = {
     "tiff": ".tif",
 }
 
-VALID_URL_PATTERN = re.compile(
-    r"https://(?:classical\.)?music\.apple\.com"
+VALID_URL_PATH_PATTERN = re.compile(
     r"(?:"
     r"/(?P<storefront>[a-z]{2})"
     r"/(?P<type>artist|album|playlist|song|music-video|post)"
     r"(?:/(?P<slug>[^\s/]+))?"
     r"/(?P<id>[0-9]+|pl\.[0-9a-z]{32}|pl\.u-[a-zA-Z0-9]+)"
-    r"(?:\?i=(?P<sub_id>[0-9]+))?"
     r"|"
     r"(?:/(?P<library_storefront>[a-z]{2}))?"
     r"/library/(?P<library_type>playlist|albums|songs|music-videos)"
     r"/(?P<library_id>[pli]\.[a-zA-Z0-9]+)"
-    r")"
+    r")/?"
 )
 
 ARTIST_AUTO_SELECT_KEY_MAP = {

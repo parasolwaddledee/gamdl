@@ -91,12 +91,13 @@ class ItunesApi:
         if not storefront or storefront == self.storefront:
             return
 
-        self.storefront = storefront
-        self.storefront_id = (
+        storefront_id = (
             143441
             if storefront.lower() == "us"
             else await self.get_storefront_id(storefront)
         )
+        self.storefront = storefront
+        self.storefront_id = storefront_id
 
     def set_language(self, language: str | None) -> None:
         if not language or language == self.language:

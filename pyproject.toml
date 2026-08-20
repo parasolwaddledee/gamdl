@@ -8,12 +8,13 @@ version = "3.8.5+cn"
 description = "A China-focused downstream of gamdl with localized metadata and enhanced lyrics support."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "async-lru>=2.0.5",
     "click>=8.3.0",
     "colorama>=0.4.6",
     "dataclass-click>=1.0.4",
+    "gamdl==3.8.5",
     "httpx>=0.28.1",
     "httpx-retries>=0.4.6",
     "inquirerpy>=0.3.4",
@@ -31,15 +32,13 @@ Upstream = "https://github.com/glomatico/gamdl"
 
 [project.scripts]
 gamdl_cn = "gamdl_cn.cli.cli:main"
-gamdl_queue = "gamdl_cn.cli.playlist_queue:main"
-gamdl_pipeline = "gamdl_cn.cli.playlist_pipeline:main"
-gamdl_service = "gamdl_cn.cli.playlist_service:main"
+gamdl_queue = "gamdl_cn.automation.queue:main"
+gamdl_pipeline = "gamdl_cn.automation.pipeline:main"
+gamdl_service = "gamdl_cn.automation.service:main"
 
 [dependency-groups]
 dev = [
     "maturin>=1.8",
-    "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
 ]
 
 [tool.maturin]

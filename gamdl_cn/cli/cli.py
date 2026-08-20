@@ -6,7 +6,6 @@ import click
 import colorama
 import structlog
 from dataclass_click import dataclass_click
-from httpx import ConnectError
 
 from .. import __version__
 from ..api import AppleMusicApi
@@ -282,7 +281,7 @@ async def main(config: CliConfig):
                 ) as e:
                     track_log.warning(f'Skipping "{media_title}": {e}')
                     continue
-                except Exception as e:
+                except Exception:
                     error_count += 1
                     track_log.exception(f'Error downloading "{media_title}"')
 

@@ -3,11 +3,15 @@ name: Build Python distributions
 on:
   push:
     tags:
-      - "v*"
+      - "*.*.*"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: python-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-sdist:

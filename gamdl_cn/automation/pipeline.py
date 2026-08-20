@@ -12,7 +12,9 @@ from pathlib import Path
 
 import structlog
 
-from gamdl_cn.cli import playlist_queue
+from gamdl_cn.automation import queue
+
+from .config import AutomationConfigError, validate_runtime_limits
 
 
 MEDIA_SUFFIXES = frozenset({".m4a", ".lrc"})
@@ -147,6 +149,11 @@ async def run_pipeline(config: PipelineConfig) -> int:
     structlog.configure(
         wrapper_class=structlog.make_filtering_bound_logger(logging.CRITICAL)
     )
+    validate_runtime_limits(
+        download_timeout=config.download_timeout,
+        verify_attempts=config.verify_attempts,
+        verify_delay=config.verify_delay,
+    )
     cookies_path = _required_file(config.cookies_path, "Apple Music Cookies")
     rclone_config_path = _required_file(config.rclone_config_path, "rclone config")
     if not config.rclone_destination.strip():
@@ -159,19 +166,19 @@ async def run_pipeline(config: PipelineConfig) -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    queue_args = argparse.Namespace(
+    queue_config = queue.QueueRunConfig(
         cookies_path=cookies_path,
         output_root=output_root,
         state_dir=state_dir,
-        queue=list(config.queues),
+        queues=config.queues,
         dry_run=config.dry_run,
         download_timeout=config.download_timeout,
         verify_attempts=config.verify_attempts,
         verify_delay=config.verify_delay,
     )
     try:
-        queue_exit_code = await playlist_queue._async_main(queue_args)
-    except playlist_queue.QueueError as error:
+        queue_exit_code = await queue.run_queues(queue_config)
+    except (AutomationConfigError, queue.QueueError) as error:
         print(f"Queue processing failed: {error}", file=sys.stderr, flush=True)
         queue_exit_code = 1
     except Exception as error:
@@ -245,7 +252,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--queue",
         action="append",
-        choices=sorted(playlist_queue.QUEUES),
+        choices=sorted(queue.QUEUES),
         help="Queue to process; repeat for both. Defaults to us and cn.",
     )
     parser.add_argument("--download-timeout", type=int, default=3600)
@@ -273,7 +280,7 @@ def main() -> None:
     )
     try:
         exit_code = asyncio.run(run_pipeline(config))
-    except PipelineError as error:
+    except (AutomationConfigError, PipelineError) as error:
         print(f"Pipeline failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error
     except KeyboardInterrupt as error:

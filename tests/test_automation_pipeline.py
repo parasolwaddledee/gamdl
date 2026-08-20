@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-import gamdl_cn.cli.playlist_pipeline as playlist_pipeline
-from gamdl_cn.cli.playlist_pipeline import (
+import gamdl_cn.automation.pipeline as playlist_pipeline
+from gamdl_cn.automation.pipeline import (
     PipelineConfig,
     PipelineError,
     _rclone_command,
@@ -57,8 +57,8 @@ class PlaylistPipelineTests(unittest.TestCase):
         with (
             patch.object(playlist_pipeline.shutil, "which", return_value="/usr/bin/rclone"),
             patch.object(
-                playlist_pipeline.playlist_queue,
-                "_async_main",
+                playlist_pipeline.queue,
+                "run_queues",
                 AsyncMock(return_value=queue_result),
             ),
             patch.object(playlist_pipeline.subprocess, "run", side_effect=run),
@@ -131,9 +131,9 @@ class PlaylistPipelineTests(unittest.TestCase):
         with (
             patch.object(playlist_pipeline.shutil, "which", return_value="/usr/bin/rclone"),
             patch.object(
-                playlist_pipeline.playlist_queue,
-                "_async_main",
-                AsyncMock(side_effect=playlist_pipeline.playlist_queue.QueueError("offline")),
+                playlist_pipeline.queue,
+                "run_queues",
+                AsyncMock(side_effect=playlist_pipeline.queue.QueueError("offline")),
             ),
             patch.object(
                 playlist_pipeline.subprocess,
@@ -163,8 +163,8 @@ class PlaylistPipelineTests(unittest.TestCase):
         with (
             patch.object(playlist_pipeline.shutil, "which", return_value="/usr/bin/rclone"),
             patch.object(
-                playlist_pipeline.playlist_queue,
-                "_async_main",
+                playlist_pipeline.queue,
+                "run_queues",
                 AsyncMock(return_value=0),
             ),
             patch.object(playlist_pipeline.subprocess, "run", side_effect=run),

@@ -1,0 +1,53 @@
+name: gamdl
+
+services:
+  gamdl:
+    image: ${GAMDL_IMAGE:-ghcr.io/parasolwaddledee/gamdl-cn:latest}
+    restart: unless-stopped
+    stop_grace_period: 65m
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - path: ${GAMDL_ENV_FILE:-./gamdl/gamdl.env}
+        required: true
+    environment:
+      GAMDL_COOKIES_PATH: /config/cookies.txt
+      RCLONE_CONFIG: /config/rclone.conf
+      GAMDL_OUTPUT_ROOT: /downloads
+      GAMDL_STATE_DIR: /state
+    volumes:
+      - type: bind
+        source: ./gamdl/cookies.txt
+        target: /config/cookies.txt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./gamdl/rclone.conf
+        target: /config/rclone.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: downloads
+        target: /downloads
+      - type: bind
+        source: ./gamdl/state
+        target: /state
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  downloads:
+    name: gamdl-downloads

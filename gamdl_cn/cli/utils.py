@@ -32,7 +32,7 @@ class Csv(click.ParamType):
         for item in items:
             try:
                 result.append(self.subtype(item))
-            except ValueError as e:
+            except ValueError:
                 self.fail(
                     f"'{item}' is not a valid value for {self.subtype.__name__}",
                     param,
@@ -44,9 +44,9 @@ class Csv(click.ParamType):
 class CustomOutputWriter:
     def __init__(
         self,
-        streams: list[Any] = [sys.stdout],
+        streams: list[Any] | None = None,
     ):
-        self.streams = streams
+        self.streams = list(streams) if streams is not None else [sys.stdout]
 
     def add_file(self, path: str):
         file_stream = open(path, "a", encoding="utf-8")
@@ -107,7 +107,7 @@ def prompt_path(
         try:
             result_path = path_validator.convert(input_path, None, None)
             break
-        except click.BadParameter as e:
+        except click.BadParameter:
             input_path = click.prompt(
                 (
                     f'{path_type.capitalize()} "{Path(input_path).absolute()}" does not exist. '

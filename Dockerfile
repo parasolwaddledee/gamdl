@@ -1,5 +1,5 @@
 ARG RUST_IMAGE=rust:1.89-slim-bookworm
-ARG PYTHON_IMAGE=python:3.14-slim-bookworm
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 ARG RCLONE_IMAGE=rclone/rclone:1.75.0
 
 FROM ${RCLONE_IMAGE} AS rclone-bin
@@ -8,8 +8,8 @@ FROM ${RUST_IMAGE} AS rust-toolchain
 
 FROM ${PYTHON_IMAGE} AS wheel-builder
 
-ARG GAMDL_VERSION=3.8.5
 ARG MATURIN_VERSION=1.14.1
+ARG UV_VERSION=0.9.30
 
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
@@ -25,17 +25,19 @@ RUN apt-get update \
 
 WORKDIR /src/gamdl_cn
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY gamdl_cn ./gamdl_cn
 
-RUN python -m pip install --no-cache-dir "maturin==${MATURIN_VERSION}" \
-    && python -m pip wheel --no-cache-dir --wheel-dir /wheels . \
-    && python -m pip wheel --no-cache-dir --wheel-dir /wheels "gamdl==${GAMDL_VERSION}"
+RUN python -m pip install --no-cache-dir \
+        "maturin==${MATURIN_VERSION}" \
+        "uv==${UV_VERSION}" \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes \
+        --output-file /tmp/requirements.txt \
+    && python -m pip wheel --no-cache-dir --wheel-dir /wheels \
+        --requirement /tmp/requirements.txt \
+    && python -m pip wheel --no-cache-dir --no-deps --wheel-dir /wheels .
 
 FROM ${PYTHON_IMAGE} AS runtime
-
-ARG GAMDL_VERSION=3.8.5
-ARG GAMDL_CN_VERSION=3.8.5+cn
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -64,16 +66,19 @@ COPY --from=rclone-bin /usr/local/bin/rclone /usr/local/bin/rclone
 COPY --from=wheel-builder /wheels /wheels
 
 RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels \
-        "gamdl==${GAMDL_VERSION}" \
-        "gamdl_cn==${GAMDL_CN_VERSION}" \
+        gamdl_cn \
     && rm -rf /wheels
+
+RUN gamdl --version \
+    && gamdl_cn --version \
+    && gamdl_queue --help > /dev/null \
+    && gamdl_pipeline --help > /dev/null \
+    && gamdl_service --help > /dev/null
 
 LABEL org.opencontainers.image.source="https://github.com/parasolwaddledee/gamdl" \
       org.opencontainers.image.description="Scheduled Apple Music queue downloader with verified Cloudflare R2 archival"
 
 USER gamdl
 WORKDIR /downloads
-
-VOLUME ["/config", "/downloads", "/state"]
 
 CMD ["gamdl_service"]

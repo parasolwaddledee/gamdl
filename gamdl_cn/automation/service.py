@@ -11,8 +11,10 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from gamdl_cn.cli.playlist_pipeline import PipelineConfig, PipelineError, run_pipeline
-from gamdl_cn.cli.playlist_queue import QUEUES
+from gamdl_cn.automation.pipeline import PipelineConfig, PipelineError, run_pipeline
+from gamdl_cn.automation.queue import QUEUES
+
+from .config import AutomationConfigError, validate_runtime_limits
 
 
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -154,7 +156,12 @@ def main() -> None:
         args = _parser().parse_args()
         interval_seconds = _duration_seconds(args.interval)
         queues = tuple(args.queue) if args.queue else _environment_queues()
-    except (ServiceConfigError, ValueError) as error:
+        validate_runtime_limits(
+            download_timeout=args.download_timeout,
+            verify_attempts=args.verify_attempts,
+            verify_delay=args.verify_delay,
+        )
+    except (AutomationConfigError, ServiceConfigError, ValueError) as error:
         print(f"Service configuration failed: {error}", file=sys.stderr)
         raise SystemExit(2) from error
 

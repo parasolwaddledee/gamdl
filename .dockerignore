@@ -1,14 +1,15 @@
-.git
-.github
-.gamdl
-Apple Music
-__pycache__
-*.py[cod]
-*.pyd
-*.so
-*.wvd
-cookies.txt
-build
-dist
-target
-gamdl_cn/downloader/ammuxer/target
+# Send only files used by Dockerfile to the builder. This prevents local media,
+# cookies, rclone credentials, SQLite state, and logs entering the build context.
+*
+!LICENSE
+!README.md
+!pyproject.toml
+!uv.lock
+!gamdl_cn/
+!gamdl_cn/**
+
+**/__pycache__/
+**/*.py[cod]
+**/*.pyd
+**/*.so
+gamdl_cn/downloader/ammuxer/target/

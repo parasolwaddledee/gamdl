@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 import structlog
 
 from ..utils import safe_gather
-from .constants import VALID_URL_PATTERN
+from .constants import VALID_URL_PATH_PATTERN
 from .enums import ArtistMediaType
 from .exceptions import (
     GamdlInterfaceMediaNotAllowedError,
@@ -47,32 +47,61 @@ class AppleMusicInterface:
         self.disallowed_media_types = disallowed_media_types
 
         self.base = song.base
+        self._default_storefront = self.base.apple_music_api.storefront
+        self._default_language = self.base.apple_music_api.language
 
     @staticmethod
     def get_url_info(url: str) -> AppleMusicUrlInfo | None:
         log = logger.bind(action="get_url_info", url=url)
 
-        match = VALID_URL_PATTERN.match(url)
+        parsed = urlparse(url)
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in {"music.apple.com", "classical.music.apple.com"}
+            or port is not None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+        ):
+            log.debug("invalid_url_origin")
+            return None
+
+        match = VALID_URL_PATH_PATTERN.fullmatch(parsed.path)
         if not match:
             log.debug("invalid_url_pattern")
 
             return None
 
-        url_match = AppleMusicUrlInfo(
-            **match.groupdict(),
-        )
+        sub_ids = parse_qs(parsed.query).get("i", [])
+        sub_id = sub_ids[0] if sub_ids else None
+        if sub_id is not None and not sub_id.isdigit():
+            log.debug("invalid_sub_id")
+            return None
+
+        url_match = AppleMusicUrlInfo(**match.groupdict(), sub_id=sub_id)
 
         log.debug("success", url_info=url_match)
 
         return url_match
 
     async def _apply_url_preferences(self, url: str, url_info: AppleMusicUrlInfo) -> None:
-        storefront = url_info.storefront or url_info.library_storefront
+        storefront = (
+            url_info.storefront
+            or url_info.library_storefront
+            or self._default_storefront
+        )
         if storefront:
-            self.base.apple_music_api.storefront = storefront
             await self.base.itunes_api.set_storefront(storefront)
+            self.base.apple_music_api.storefront = storefront
 
-        language = parse_qs(urlparse(url).query).get("l", [None])[0]
+        language = (
+            parse_qs(urlparse(url).query).get("l", [None])[0]
+            or self._default_language
+        )
         if language:
             self.base.apple_music_api.language = language
             self.base.apple_music_api.client.headers["accept-language"] = language

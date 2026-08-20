@@ -6,4 +6,3 @@ EXCLUDED_CONFIG_FILE_PARAMS = {
     "version",
     "help",
 }
-X_NOT_IN_PATH = '{} was not found in PATH at "{}"'

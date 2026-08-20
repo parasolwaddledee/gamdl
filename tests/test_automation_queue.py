@@ -7,8 +7,8 @@ from contextlib import closing
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import gamdl_cn.cli.playlist_queue as playlist_queue
-from gamdl_cn.cli.playlist_queue import (
+import gamdl_cn.automation.queue as playlist_queue
+from gamdl_cn.automation.queue import (
     QUEUES,
     QueueError,
     TrackRef,
@@ -116,6 +116,17 @@ class PlaylistQueueTests(unittest.TestCase):
             self.assertIsNone(
                 _registered_download(database_path, QUEUES["us"], track)
             )
+
+    def test_registered_download_surfaces_corrupt_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "downloads.sqlite3"
+            database_path.write_bytes(b"not a sqlite database")
+            with self.assertRaisesRegex(QueueError, "Could not read download database"):
+                _registered_download(
+                    database_path,
+                    QUEUES["us"],
+                    TrackRef("i.library", "123456"),
+                )
 
     def test_backfill_source_urls_migrates_existing_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

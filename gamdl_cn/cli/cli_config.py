@@ -9,15 +9,12 @@ from dataclass_click import argument, option
 from ..api import AppleMusicApi, WrapperApi
 from ..downloader import (
     AppleMusicBaseDownloader,
-    AppleMusicDownloader,
     AppleMusicMusicVideoDownloader,
     DownloadMode,
     RemuxFormatMusicVideo,
-    RemuxMode,
 )
 from ..interface import (
     AppleMusicBaseInterface,
-    AppleMusicInterface,
     AppleMusicMusicVideoInterface,
     AppleMusicSongInterface,
     AppleMusicUploadedVideoInterface,
@@ -41,11 +38,8 @@ music_video_interface_sig = inspect.signature(AppleMusicMusicVideoInterface.__in
 uploaded_video_interface_sig = inspect.signature(
     AppleMusicUploadedVideoInterface.__init__
 )
-interface_create_sig = inspect.signature(AppleMusicInterface)
-
 base_downloader_sig = inspect.signature(AppleMusicBaseDownloader.__init__)
 music_video_downloader_sig = inspect.signature(AppleMusicMusicVideoDownloader.__init__)
-downloader_sig = inspect.signature(AppleMusicDownloader.__init__)
 
 
 @dataclass

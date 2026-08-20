@@ -4,7 +4,7 @@ from ..interface.enums import CoverFormat
 from ..interface.types import AppleMusicMedia, DecryptionKeyAv
 from .ammuxer import decrypt_and_mux_hex
 from .base import AppleMusicBaseDownloader
-from .enums import RemuxFormatMusicVideo, RemuxMode
+from .enums import RemuxFormatMusicVideo
 from .types import DownloadItem
 
 
