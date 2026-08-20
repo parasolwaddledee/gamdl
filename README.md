@@ -84,10 +84,12 @@ docker compose up --detach --build
 docker compose logs --follow pipeline
 ```
 
-`GAMDL_COOKIES_FILE` and `RCLONE_CONFIG_FILE` are host-side Compose parameters.
-They are mounted read-only at `/config/cookies.txt` and `/config/rclone.conf`.
-They must be readable by Docker. Cookies, R2 credentials, Widevine device files,
-and other secrets are never copied into the image.
+`GAMDL_COOKIES_FILE`, `RCLONE_CONFIG_FILE`, and `GAMDL_STATE_DIR` are host-side
+Compose parameters. The first two are mounted read-only at
+`/config/cookies.txt` and `/config/rclone.conf`; the state directory is mounted
+read-write at `/state`. They must be accessible to Docker. Cookies, R2
+credentials, Widevine device files, and other secrets are never copied into the
+image.
 
 The principal runtime parameters are:
 
@@ -96,20 +98,34 @@ The principal runtime parameters are:
 | `GAMDL_RUN_INTERVAL` | `1h` | Delay after each completed run |
 | `GAMDL_RUN_IMMEDIATELY` | `true` | Run before the first interval wait |
 | `GAMDL_RUN_ONCE` | `false` | Execute one transaction and exit |
+| `GAMDL_STATE_DIR` | `./.gamdl/playlist-queue` | Persistent host directory for SQLite state and logs |
 | `GAMDL_COOKIES_PATH` | `/config/cookies.txt` | Cookies path inside the container |
 | `RCLONE_CONFIG` | `/config/rclone.conf` | rclone config path inside the container |
 | `RCLONE_DESTINATION` | `music:music` | Remote and path receiving the files |
 | `GAMDL_QUEUES` | `us,cn` | Queues to process (`us`, `cn`, or both) |
+| `GAMDL_US_PLAYLIST` | `US_Pending` | Exact editable playlist name for official `gamdl` |
+| `GAMDL_CN_PLAYLIST` | `CN_Pending` | Exact editable playlist name for `gamdl_cn` |
 | `GAMDL_KEEP_LOCAL` | `false` | Keep verified local files when true |
 | `GAMDL_DRY_RUN` | `false` | Read queues and preview copies only |
 | `GAMDL_DOWNLOAD_TIMEOUT` | `3600` | Per-track download timeout in seconds |
 | `GAMDL_VERIFY_ATTEMPTS` | `6` | Apple playlist removal checks |
 | `GAMDL_VERIFY_DELAY` | `3` | Seconds between removal checks |
 
-`/downloads` and `/state` are persistent volumes. `/state` contains the SQLite
-download registry, privacy-filtered downloader logs, and `last-run.json`. The
-Compose service runs with a read-only root filesystem, a temporary `/tmp`, no
-new privileges, and the unprivileged `gamdl` image user.
+`/downloads` uses a Docker-managed named volume and is not bound to a host
+directory. Keeping this staging area across container replacement prevents a
+download from being lost between playlist removal and verified R2 upload.
+`/state` is bound to `GAMDL_STATE_DIR` and contains the permanent
+`downloads.sqlite3` registry, privacy-filtered downloader logs, and
+`last-run.json`. Each `media` row stores `id`, `path`, a nullable `source_url`,
+`source` (`us` or `cn`), and a nullable UTC ISO 8601 `downloaded_at` timestamp;
+`(source, id)` is unique. New downloads receive a timestamp after local media
+verification; migrated rows remain null because their original completion time
+is unknown. On first startup, legacy `us.sqlite3` and `cn.sqlite3` records are
+merged and those files are renamed to `.pre-merge.bak` backups when the host bind
+mount permits renames. Otherwise the legacy files remain as unused backups; a
+migration marker prevents them from being imported again. The Compose service
+runs with a read-only root filesystem, a temporary `/tmp`, no new privileges,
+and the unprivileged `gamdl` image user.
 
 For a one-shot run without Compose:
 
@@ -120,7 +136,7 @@ docker run --rm \
   --volume ./cookies.txt:/config/cookies.txt:ro \
   --volume ./rclone.conf:/config/rclone.conf:ro \
   --volume gamdl-downloads:/downloads \
-  --volume gamdl-state:/state \
+  --volume ./.gamdl/playlist-queue:/state \
   gamdl-dual
 ```
 
@@ -129,11 +145,11 @@ container command.
 
 ## Playlist download queues
 
-The image also includes `gamdl_queue`, an idempotent queue processor for these
-exact playlists:
+The image also includes `gamdl_queue`, an idempotent queue processor for two
+configurable editable playlists:
 
-- official `gamdl`: `US_Pending`;
-- `gamdl_cn`: `CN_Pending`.
+- official `gamdl`: `GAMDL_US_PLAYLIST` (default `US_Pending`);
+- `gamdl_cn`: `GAMDL_CN_PLAYLIST` (default `CN_Pending`).
 
 For each catalog song, it requires a completed local media file registered in
 SQLite and accepted by FFprobe, and only then removes it from `Pending`. A retry
@@ -151,8 +167,9 @@ URL with `?l=zh-Hans-CN`, matching Apple Music's localized US links.
 Both queues write into the same output root using gamdl's
 `Artist/Album/Track` layout. The queue name is not added to the path, so rclone
 uploads `Artist/Album/Track.m4a` directly below the configured destination
-rather than creating separate `US/` and `CN/` directories. US and CN retain
-separate SQLite databases and temporary directories.
+rather than creating separate `US/` and `CN/` directories. US and CN share one
+SQLite registry with a source column, while retaining separate temporary
+directories for downloader compatibility.
 
 Run a read-only preflight first:
 

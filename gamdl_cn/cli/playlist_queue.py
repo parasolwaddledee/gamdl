@@ -4,11 +4,13 @@ import argparse
 import asyncio
 import importlib
 import logging
+import os
 import re
 import shutil
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,9 @@ import structlog
 
 AMP_API_URL = "https://amp-api.music.apple.com"
 SUCCESS_STATUS_CODES = {200, 201, 202, 204}
+DATABASE_FILENAME = "downloads.sqlite3"
+LEGACY_DATABASE_FILENAMES = {"us": "us.sqlite3", "cn": "cn.sqlite3"}
+LEGACY_MIGRATION = "merge-us-cn-databases-v1"
 
 
 class QueueError(RuntimeError):
@@ -35,6 +40,7 @@ class QueueConfig:
     package: str
     command: str
     pending_name: str
+    pending_name_env: str
     language: str
 
 
@@ -50,6 +56,7 @@ QUEUES = {
         package="gamdl",
         command="gamdl",
         pending_name="US_Pending",
+        pending_name_env="GAMDL_US_PLAYLIST",
         language="en-US",
     ),
     "cn": QueueConfig(
@@ -57,6 +64,7 @@ QUEUES = {
         package="gamdl_cn",
         command="gamdl_cn",
         pending_name="CN_Pending",
+        pending_name_env="GAMDL_CN_PLAYLIST",
         language="zh-Hans-CN",
     ),
 }
@@ -209,14 +217,204 @@ def _account_storefront(api: Any) -> str | None:
     return storefront if re.fullmatch(r"[a-z]{2}", storefront) else None
 
 
-def _registered_download(database_path: Path, track: TrackRef) -> Path | None:
+def _pending_playlist_name(queue: QueueConfig) -> str:
+    name = os.environ.get(queue.pending_name_env, queue.pending_name).strip()
+    if not name:
+        raise QueueError(f"{queue.pending_name_env} must not be empty")
+    return name
+
+
+def _download_url(queue: QueueConfig, storefront: str, catalog_id: str) -> str:
+    return (
+        f"https://music.apple.com/{storefront}/song/queue/{catalog_id}?"
+        f"{urlencode({'l': queue.language})}"
+    )
+
+
+def _ensure_download_schema(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS media (
+            id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            source_url TEXT,
+            source TEXT NOT NULL CHECK (source IN ('us', 'cn')),
+            downloaded_at TEXT,
+            PRIMARY KEY (source, id)
+        )
+        """
+    )
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(media)")
+    }
+    if not {"id", "path", "source"}.issubset(columns):
+        raise QueueError("Download database has an incompatible media table")
+    if "source_url" not in columns:
+        connection.execute("ALTER TABLE media ADD COLUMN source_url TEXT")
+    if "downloaded_at" not in columns:
+        connection.execute("ALTER TABLE media ADD COLUMN downloaded_at TEXT")
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)"
+    )
+
+
+def _legacy_rows(database_path: Path) -> list[tuple[str, str, str | None]]:
+    if not database_path.is_file():
+        return []
+    with closing(sqlite3.connect(database_path)) as connection:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(media)")
+        }
+        if not {"id", "path"}.issubset(columns):
+            raise QueueError(
+                f"Legacy database has an incompatible media table: {database_path}"
+            )
+        if "source_url" in columns:
+            rows = connection.execute(
+                "SELECT id, path, source_url FROM media"
+            ).fetchall()
+        else:
+            rows = [
+                (row[0], row[1], None)
+                for row in connection.execute("SELECT id, path FROM media").fetchall()
+            ]
+    return [
+        (str(media_id), str(path), str(source_url) if source_url else None)
+        for media_id, path, source_url in rows
+    ]
+
+
+def _legacy_backup_path(database_path: Path) -> Path:
+    candidate = database_path.with_name(f"{database_path.name}.pre-merge.bak")
+    counter = 1
+    while candidate.exists():
+        candidate = database_path.with_name(
+            f"{database_path.name}.pre-merge-{counter}.bak"
+        )
+        counter += 1
+    return candidate
+
+
+def _migrate_download_databases(state_dir: Path) -> Path:
+    database_path = state_dir / DATABASE_FILENAME
+    legacy_paths = {
+        source: state_dir / filename
+        for source, filename in LEGACY_DATABASE_FILENAMES.items()
+    }
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            with connection:
+                _ensure_download_schema(connection)
+                migrated = connection.execute(
+                    "SELECT 1 FROM migrations WHERE name = ?",
+                    (LEGACY_MIGRATION,),
+                ).fetchone()
+                if not migrated:
+                    for source, legacy_path in legacy_paths.items():
+                        connection.executemany(
+                            """
+                            INSERT INTO media (id, path, source_url, source)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(source, id) DO UPDATE SET
+                                path = excluded.path,
+                                source_url = COALESCE(
+                                    excluded.source_url,
+                                    media.source_url
+                                )
+                            """,
+                            [(*row, source) for row in _legacy_rows(legacy_path)],
+                        )
+                    connection.execute(
+                        "INSERT INTO migrations (name) VALUES (?)",
+                        (LEGACY_MIGRATION,),
+                    )
+    except QueueError:
+        raise
+    except sqlite3.Error as error:
+        raise QueueError(f"Could not migrate download database: {database_path}") from error
+
+    for legacy_path in legacy_paths.values():
+        if legacy_path.is_file():
+            try:
+                legacy_path.replace(_legacy_backup_path(legacy_path))
+            except OSError:
+                # Some host bind mounts allow SQLite writes but deny renames.
+                # The migration marker prevents these legacy files being used
+                # or imported again, so an archive failure is non-fatal.
+                pass
+    return database_path
+
+
+def _backfill_source_urls(
+    database_path: Path,
+    queue: QueueConfig,
+    storefront: str,
+) -> None:
+    if not database_path.is_file():
+        return
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            with connection:
+                _ensure_download_schema(connection)
+                rows = connection.execute(
+                    "SELECT id FROM media "
+                    "WHERE source = ? AND "
+                    "(source_url IS NULL OR TRIM(source_url) = '')",
+                    (queue.key,),
+                ).fetchall()
+                connection.executemany(
+                    "UPDATE media SET source_url = ? WHERE source = ? AND id = ?",
+                    [
+                        (
+                            _download_url(queue, storefront, str(row[0])),
+                            queue.key,
+                            str(row[0]),
+                        )
+                        for row in rows
+                    ],
+                )
+    except sqlite3.Error as error:
+        raise QueueError(
+            f"Could not migrate download database: {database_path}"
+        ) from error
+
+
+def _record_source_url(
+    database_path: Path,
+    queue: QueueConfig,
+    track: TrackRef,
+    source_url: str,
+) -> None:
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            with connection:
+                _ensure_download_schema(connection)
+                result = connection.execute(
+                    "UPDATE media SET source_url = ? "
+                    "WHERE source = ? AND id IN (?, ?)",
+                    (source_url, queue.key, track.catalog_id, track.library_id),
+                )
+                if result.rowcount < 1:
+                    raise QueueError("Downloaded media URL could not be registered")
+    except QueueError:
+        raise
+    except sqlite3.Error as error:
+        raise QueueError(f"Could not update download database: {database_path}") from error
+
+
+def _registered_download(
+    database_path: Path,
+    queue: QueueConfig,
+    track: TrackRef,
+) -> Path | None:
     if not database_path.is_file():
         return None
     try:
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             row = connection.execute(
-                "SELECT path FROM media WHERE id IN (?, ?) ORDER BY id = ? DESC LIMIT 1",
-                (track.catalog_id, track.library_id, track.catalog_id),
+                "SELECT path FROM media WHERE source = ? AND id IN (?, ?) "
+                "ORDER BY id = ? DESC LIMIT 1",
+                (queue.key, track.catalog_id, track.library_id, track.catalog_id),
             ).fetchone()
     except sqlite3.Error:
         return None
@@ -224,6 +422,66 @@ def _registered_download(database_path: Path, track: TrackRef) -> Path | None:
         return None
     path = Path(row[0])
     return path if path.is_file() else None
+
+
+def _downloader_registered_download(
+    database_path: Path,
+    track: TrackRef,
+) -> Path | None:
+    if not database_path.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            row = connection.execute(
+                "SELECT path FROM media WHERE id IN (?, ?) "
+                "ORDER BY id = ? DESC LIMIT 1",
+                (track.catalog_id, track.library_id, track.catalog_id),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return Path(row[0]) if row else None
+
+
+def _record_download(
+    database_path: Path,
+    queue: QueueConfig,
+    track: TrackRef,
+    path: Path,
+    source_url: str,
+) -> None:
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            with connection:
+                _ensure_download_schema(connection)
+                connection.execute(
+                    """
+                    INSERT INTO media (
+                        id,
+                        path,
+                        source_url,
+                        source,
+                        downloaded_at
+                    )
+                    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                    ON CONFLICT(source, id) DO UPDATE SET
+                        path = excluded.path,
+                        source_url = excluded.source_url,
+                        downloaded_at = excluded.downloaded_at
+                    """,
+                    (track.catalog_id, str(path), source_url, queue.key),
+                )
+                if track.library_id != track.catalog_id:
+                    connection.execute(
+                        "DELETE FROM media WHERE source = ? AND id = ?",
+                        (queue.key, track.library_id),
+                    )
+    except sqlite3.Error as error:
+        raise QueueError(f"Could not update download database: {database_path}") from error
+
+
+def _remove_downloader_database(database_path: Path) -> None:
+    for suffix in ("", "-journal", "-shm", "-wal"):
+        database_path.with_name(database_path.name + suffix).unlink(missing_ok=True)
 
 
 def _media_is_decodable(path: Path) -> bool:
@@ -266,19 +524,19 @@ async def _download(
     state_dir: Path,
     timeout: int,
 ) -> Path:
-    database_path = state_dir / f"{queue.key}.sqlite3"
-    registered = _registered_download(database_path, track)
+    database_path = _migrate_download_databases(state_dir)
+    url = _download_url(queue, storefront, track.catalog_id)
+    registered = _registered_download(database_path, queue, track)
     if registered and await asyncio.to_thread(_media_is_decodable, registered):
+        _record_source_url(database_path, queue, track, url)
         return registered
 
     output_path = output_root
     temp_path = state_dir / "tmp" / queue.key
+    downloader_database_path = temp_path / "downloader.sqlite3"
     output_path.mkdir(parents=True, exist_ok=True)
     temp_path.mkdir(parents=True, exist_ok=True)
-    url = (
-        f"https://music.apple.com/{storefront}/song/queue/{track.catalog_id}?"
-        f"{urlencode({'l': queue.language})}"
-    )
+    _remove_downloader_database(downloader_database_path)
     command = [
         queue.command,
         "--no-config-file",
@@ -291,7 +549,7 @@ async def _download(
         "--temp-path",
         str(temp_path),
         "--database-path",
-        str(database_path),
+        str(downloader_database_path),
         "--song-codec-priority",
         "aac-web",
         "--overwrite",
@@ -314,21 +572,26 @@ async def _download(
     try:
         result = await asyncio.to_thread(run)
     except subprocess.TimeoutExpired as error:
+        _remove_downloader_database(downloader_database_path)
         raise QueueError(f"{queue.command} download timed out") from error
 
     (state_dir / f"{queue.key}-last-download.log").write_text(
         result.stdout or "",
         encoding="utf-8",
     )
-    registered = _registered_download(database_path, track)
-    decodable = bool(
-        registered and await asyncio.to_thread(_media_is_decodable, registered)
-    )
-    if result.returncode != 0 or not registered or not decodable:
-        raise QueueError(
-            f"{queue.command} did not register a decodable local media file"
+    try:
+        registered = _downloader_registered_download(downloader_database_path, track)
+        decodable = bool(
+            registered and await asyncio.to_thread(_media_is_decodable, registered)
         )
-    return registered
+        if result.returncode != 0 or not registered or not decodable:
+            raise QueueError(
+                f"{queue.command} did not register a decodable local media file"
+            )
+        _record_download(database_path, queue, track, registered, url)
+        return registered
+    finally:
+        _remove_downloader_database(downloader_database_path)
 
 
 async def _wait_for_catalog_id(
@@ -398,12 +661,13 @@ async def _process_queue(
     verify_attempts: int,
     verify_delay: float,
 ) -> int:
+    pending_name = _pending_playlist_name(queue)
     api = await _create_api(queue, cookies_path)
     label = queue.key.upper()
     try:
         print(f"[{label}] reading playlist queue", flush=True)
         playlists = await _list_playlists(api)
-        pending = _resolve_playlist(playlists, queue.pending_name)
+        pending = _resolve_playlist(playlists, pending_name)
 
         pending_tracks = await _list_tracks(api, pending["id"])
         actionable = [track for item in pending_tracks if (track := _track_ref(item))]
@@ -418,6 +682,11 @@ async def _process_queue(
         storefront = _account_storefront(api)
         if not storefront:
             raise QueueError("Apple Music account storefront is unavailable")
+        _backfill_source_urls(
+            state_dir / DATABASE_FILENAME,
+            queue,
+            storefront,
+        )
 
         failures = unsupported
         for index, track in enumerate(actionable, 1):
@@ -482,6 +751,7 @@ async def _async_main(args: argparse.Namespace) -> int:
     state_dir = args.state_dir.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     state_dir.mkdir(parents=True, exist_ok=True)
+    _migrate_download_databases(state_dir)
 
     queue_keys = args.queue or ["us", "cn"]
     for queue_key in queue_keys:

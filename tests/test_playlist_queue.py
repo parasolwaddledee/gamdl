@@ -1,7 +1,9 @@
 from pathlib import Path
+import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -12,10 +14,14 @@ from gamdl_cn.cli.playlist_queue import (
     TrackRef,
     _account_storefront,
     _api_url,
+    _backfill_source_urls,
     _catalog_id,
     _create_api,
     _download,
+    _download_url,
     _media_is_decodable,
+    _migrate_download_databases,
+    _pending_playlist_name,
     _process_queue,
     _registered_download,
     _resolve_playlist,
@@ -90,19 +96,184 @@ class PlaylistQueueTests(unittest.TestCase):
             media_path = tmp_path / "song.m4a"
             media_path.write_bytes(b"media")
             database_path = tmp_path / "queue.sqlite3"
-            with sqlite3.connect(database_path) as connection:
+            with closing(sqlite3.connect(database_path)) as connection, connection:
+                connection.execute(
+                    "CREATE TABLE media ("
+                    "id TEXT NOT NULL, path TEXT NOT NULL, source_url TEXT, "
+                    "source TEXT NOT NULL, PRIMARY KEY (source, id))"
+                )
+                connection.execute(
+                    "INSERT INTO media (id, path, source) VALUES (?, ?, ?)",
+                    ("123456", str(media_path), "us"),
+                )
+            track = TrackRef("i.library", "123456")
+            self.assertEqual(
+                _registered_download(database_path, QUEUES["us"], track),
+                media_path,
+            )
+
+            media_path.unlink()
+            self.assertIsNone(
+                _registered_download(database_path, QUEUES["us"], track)
+            )
+
+    def test_backfill_source_urls_migrates_existing_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_dir = Path(temporary_directory)
+            legacy_path = state_dir / "cn.sqlite3"
+            with closing(sqlite3.connect(legacy_path)) as connection, connection:
+                connection.execute(
+                    "CREATE TABLE media (id TEXT PRIMARY KEY, path TEXT NOT NULL)"
+                )
+                connection.executemany(
+                    "INSERT INTO media (id, path) VALUES (?, ?)",
+                    [
+                        ("1721450032", "/downloads/song.m4a"),
+                        ("1794222374", "/downloads/other.m4a"),
+                    ],
+                )
+
+            database_path = _migrate_download_databases(state_dir)
+            _backfill_source_urls(database_path, QUEUES["cn"], "us")
+
+            with closing(sqlite3.connect(database_path)) as connection, connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(media)")
+                }
+                rows = dict(
+                    connection.execute(
+                        "SELECT id, source_url FROM media WHERE source = 'cn'"
+                    )
+                )
+
+            self.assertIn("source_url", columns)
+            self.assertIn("source", columns)
+            self.assertIn("downloaded_at", columns)
+            self.assertFalse(legacy_path.exists())
+            self.assertTrue((state_dir / "cn.sqlite3.pre-merge.bak").is_file())
+            self.assertEqual(
+                rows["1721450032"],
+                "https://music.apple.com/us/song/queue/1721450032?l=zh-Hans-CN",
+            )
+            self.assertEqual(
+                rows["1794222374"],
+                "https://music.apple.com/us/song/queue/1794222374?l=zh-Hans-CN",
+            )
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                timestamps = connection.execute(
+                    "SELECT downloaded_at FROM media"
+                ).fetchall()
+            self.assertEqual(timestamps, [(None,), (None,)])
+
+    def test_existing_merged_database_adds_downloaded_at_column(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_dir = Path(temporary_directory)
+            database_path = state_dir / "downloads.sqlite3"
+            with closing(sqlite3.connect(database_path)) as connection, connection:
+                connection.execute(
+                    "CREATE TABLE media ("
+                    "id TEXT NOT NULL, path TEXT NOT NULL, source_url TEXT, "
+                    "source TEXT NOT NULL, PRIMARY KEY (source, id))"
+                )
+                connection.execute(
+                    "INSERT INTO media (id, path, source) VALUES (?, ?, ?)",
+                    ("123456", "/downloads/song.m4a", "us"),
+                )
+
+            _migrate_download_databases(state_dir)
+            with closing(sqlite3.connect(database_path)) as connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(media)")
+                }
+                downloaded_at = connection.execute(
+                    "SELECT downloaded_at FROM media"
+                ).fetchone()[0]
+            self.assertIn("downloaded_at", columns)
+            self.assertIsNone(downloaded_at)
+
+    def test_database_merge_keeps_same_catalog_id_for_both_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_dir = Path(temporary_directory)
+            for source in ("us", "cn"):
+                legacy_path = state_dir / f"{source}.sqlite3"
+                with closing(sqlite3.connect(legacy_path)) as connection, connection:
+                    connection.execute(
+                        "CREATE TABLE media ("
+                        "id TEXT PRIMARY KEY, path TEXT NOT NULL, source_url TEXT)"
+                    )
+                    connection.execute(
+                        "INSERT INTO media (id, path, source_url) VALUES (?, ?, ?)",
+                        (
+                            "1721450032",
+                            f"/downloads/{source}.m4a",
+                            f"https://music.apple.com/us/song/queue/1721450032?l={source}",
+                        ),
+                    )
+
+            database_path = _migrate_download_databases(state_dir)
+            with closing(sqlite3.connect(database_path)) as connection:
+                rows = connection.execute(
+                    "SELECT id, path, source FROM media ORDER BY source"
+                ).fetchall()
+
+            self.assertEqual(
+                rows,
+                [
+                    ("1721450032", "/downloads/cn.m4a", "cn"),
+                    ("1721450032", "/downloads/us.m4a", "us"),
+                ],
+            )
+            self.assertEqual(_migrate_download_databases(state_dir), database_path)
+
+    def test_database_merge_tolerates_legacy_archive_permission_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_dir = Path(temporary_directory)
+            legacy_path = state_dir / "us.sqlite3"
+            with closing(sqlite3.connect(legacy_path)) as connection, connection:
                 connection.execute(
                     "CREATE TABLE media (id TEXT PRIMARY KEY, path TEXT NOT NULL)"
                 )
                 connection.execute(
                     "INSERT INTO media (id, path) VALUES (?, ?)",
-                    ("123456", str(media_path)),
+                    ("123456", "/downloads/song.m4a"),
                 )
-            track = TrackRef("i.library", "123456")
-            self.assertEqual(_registered_download(database_path, track), media_path)
 
-            media_path.unlink()
-            self.assertIsNone(_registered_download(database_path, track))
+            with patch.object(Path, "replace", side_effect=PermissionError):
+                database_path = _migrate_download_databases(state_dir)
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                row = connection.execute(
+                    "SELECT id, source FROM media"
+                ).fetchone()
+            self.assertEqual(row, ("123456", "us"))
+            self.assertTrue(legacy_path.is_file())
+
+    def test_download_url_includes_storefront_id_and_language(self) -> None:
+        self.assertEqual(
+            _download_url(QUEUES["cn"], "us", "1721450032"),
+            "https://music.apple.com/us/song/queue/1721450032?l=zh-Hans-CN",
+        )
+
+    def test_pending_playlist_name_uses_environment_override(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_pending_playlist_name(QUEUES["us"]), "US_Pending")
+            self.assertEqual(_pending_playlist_name(QUEUES["cn"]), "CN_Pending")
+
+        with patch.dict(
+            os.environ,
+            {
+                "GAMDL_US_PLAYLIST": "My US Queue",
+                "GAMDL_CN_PLAYLIST": "我的下载队列",
+            },
+            clear=True,
+        ):
+            self.assertEqual(_pending_playlist_name(QUEUES["us"]), "My US Queue")
+            self.assertEqual(_pending_playlist_name(QUEUES["cn"]), "我的下载队列")
+
+        with patch.dict(os.environ, {"GAMDL_CN_PLAYLIST": "  "}, clear=True):
+            with self.assertRaisesRegex(QueueError, "GAMDL_CN_PLAYLIST"):
+                _pending_playlist_name(QUEUES["cn"])
 
     def test_account_storefront_requires_two_letter_subscription_storefront(
         self,
@@ -158,34 +329,50 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         completed = SimpleNamespace(returncode=0, stdout="")
-        with (
-            tempfile.TemporaryDirectory() as temporary_directory,
-            patch.object(
-                playlist_queue,
-                "_registered_download",
-                side_effect=[None, Path("song.m4a")],
-            ),
-            patch.object(
-                playlist_queue,
-                "_media_is_decodable",
-                return_value=True,
-            ),
-            patch.object(
-                playlist_queue.subprocess,
-                "run",
-                return_value=completed,
-            ) as run,
-        ):
+        with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            await _download(
-                QUEUES["cn"],
-                TrackRef("i.library", "1721450032"),
-                storefront="us",
-                cookies_path=root / "cookies.txt",
-                output_root=root / "downloads",
-                state_dir=root / "state",
-                timeout=10,
-            )
+            media_path = root / "song.m4a"
+            media_path.write_bytes(b"media")
+            state_dir = root / "state"
+            state_dir.mkdir()
+            with (
+                patch.object(
+                    playlist_queue,
+                    "_registered_download",
+                    return_value=None,
+                ),
+                patch.object(
+                    playlist_queue,
+                    "_downloader_registered_download",
+                    return_value=media_path,
+                ),
+                patch.object(
+                    playlist_queue,
+                    "_media_is_decodable",
+                    return_value=True,
+                ),
+                patch.object(
+                    playlist_queue.subprocess,
+                    "run",
+                    return_value=completed,
+                ) as run,
+            ):
+                await _download(
+                    QUEUES["cn"],
+                    TrackRef("i.library", "1721450032"),
+                    storefront="us",
+                    cookies_path=root / "cookies.txt",
+                    output_root=root / "downloads",
+                    state_dir=state_dir,
+                    timeout=10,
+                )
+            database_path = state_dir / "downloads.sqlite3"
+            with closing(sqlite3.connect(database_path)) as connection, connection:
+                source_url, source, downloaded_at = connection.execute(
+                    "SELECT source_url, source, downloaded_at "
+                    "FROM media WHERE id = ?",
+                    ("1721450032",),
+                ).fetchone()
 
         command = run.call_args.args[0]
         self.assertIn("--language", command)
@@ -193,9 +380,23 @@ class PlaylistQueueAsyncTests(unittest.IsolatedAsyncioTestCase):
         output_path_index = command.index("--output-path") + 1
         self.assertEqual(command[output_path_index], str(root / "downloads"))
         self.assertNotIn(str(root / "downloads" / "CN"), command)
+        database_path_index = command.index("--database-path") + 1
+        self.assertEqual(
+            command[database_path_index],
+            str(root / "state" / "tmp" / "cn" / "downloader.sqlite3"),
+        )
         self.assertIn(
             "https://music.apple.com/us/song/queue/1721450032?l=zh-Hans-CN",
             command,
+        )
+        self.assertEqual(
+            source_url,
+            "https://music.apple.com/us/song/queue/1721450032?l=zh-Hans-CN",
+        )
+        self.assertEqual(source, "cn")
+        self.assertRegex(
+            downloaded_at,
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$",
         )
 
     async def test_process_queue_downloads_then_removes(self) -> None:
